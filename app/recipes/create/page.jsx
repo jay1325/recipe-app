@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { storage, db, auth } from "./../../../firebase";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { addDoc,getDocs, collection } from "firebase/firestore";
+import { addDoc, collection, getDocs, doc, setDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 
 export default function CreateRecipe() {
@@ -11,24 +11,28 @@ export default function CreateRecipe() {
   const [title, setTitle] = useState("");
   const [ingredients, setIngredients] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [file, setfile] = useState(null);
+  const [file, setFile] = useState(null);
 
   const handleImageUpload = (e) => {
-    setfile(e.target.files[0]);
+    setFile(e.target.files[0]);
   };
-  const handleSubmit = (e) => {
+
+  const generateRecipeID = async () => {
+    const recipesSnapshot = await getDocs(collection(db, "recipes"));
+    const recipeCount = recipesSnapshot.size;
+    return recipeCount + 1; // Next sequential ID
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     const storageRef = ref(storage, file.name);
     const uploadTask = uploadBytesResumable(storageRef, file);
 
-    // Listen for state changes, errors, and completion of the upload.
     uploadTask.on(
       "state_changed",
       (snapshot) => {
-        // Get task progress, including the number of bytes uploaded and the total number of bytes to be uploaded
-        const progress =
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         console.log("Upload is " + progress + "% done");
         switch (snapshot.state) {
           case "paused":
@@ -40,51 +44,53 @@ export default function CreateRecipe() {
         }
       },
       (error) => {
-        // A full list of error codes is available at
-        // https://firebase.google.com/docs/storage/web/handle-errors
         switch (error.code) {
           case "storage/unauthorized":
-            // User doesn't have permission to access the object
             break;
           case "storage/canceled":
-            // User canceled the upload
             break;
-
-          // ...
-
           case "storage/unknown":
-            // Unknown error occurred, inspect error.serverResponse
             break;
         }
       },
-      () => {
-        // Upload completed successfully, now we can get the download URL
-        getDownloadURL(uploadTask.snapshot.ref).then(async (downloadURL) => {
-          console.log("File available at", downloadURL);
+      async () => {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        console.log("File available at", downloadURL);
 
-          const recipesCollection = collection(db, "recipes");
-          const recipesSnapshot = await getDocs(recipesCollection);
-          try {
-            await addDoc(recipesCollection, {
-              title: title,
-              ingredients: ingredients,
-              instructions: instructions,
-              imageUrl: downloadURL,
-              userId: auth.currentUser.uid,
-            });
-          } catch (e) {
-            alert("Something went wrong", e);
-          }
+        try {
+          const recipeID = await generateRecipeID();
+          
+          const recipeDocRef = doc(collection(db, "recipes"));
+          const recipeDocID = recipeDocRef.id;
+
+          // Add document to recipes collection
+          await setDoc(recipeDocRef, {
+            title: title,
+            ingredients: ingredients,
+            instructions: instructions,
+            imageUrl: downloadURL,
+            userId: auth.currentUser.uid,
+          });
+
+          // Add document to RecipeID collection with the same ID
+          const recipeIDDocRef = doc(db, "RecipeID", recipeDocID);
+          await setDoc(recipeIDDocRef, {
+            RecipeId: recipeID,
+          });
+
           setTitle("");
           setIngredients("");
           setInstructions("");
-          setfile(null);
+          setFile(null);
 
-          router.push("/")
-        });
+          router.push("/");
+        } catch (e) {
+          alert("Something went wrong", e);
+        }
       }
     );
   };
+
   return (
     <div
       className="d-flex align-items-center justify-content-center"
@@ -98,7 +104,7 @@ export default function CreateRecipe() {
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="title"
+            placeholder="Title"
             required
           />
         </div>
@@ -108,7 +114,7 @@ export default function CreateRecipe() {
             className="form-control"
             value={ingredients}
             onChange={(e) => setIngredients(e.target.value)}
-            placeholder="ingredients"
+            placeholder="Ingredients"
             rows={5}
             required
           ></textarea>
@@ -118,7 +124,7 @@ export default function CreateRecipe() {
             className="form-control"
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            placeholder="instructions"
+            placeholder="Instructions"
             rows={5}
             required
           ></textarea>
